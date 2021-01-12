@@ -243,8 +243,16 @@ export class ExpressApp {
       };
     }
 
+    const ONE_MINUTE = 60;
+    // See https://support.cloudflare.com/hc/en-us/articles/115003206852-Understanding-Origin-Cache-Control
+    // Case: "▶Cache an asset with revalidation, but allow stale responses if origin server is unreachable"
+    function SetPublicCache(res: express.Response, seconds: number) {
+      res.setHeader('Cache-Control', `public, max-age=${seconds}, stale-if-error=${10 * seconds}`);
+    }
+
     // retrieve latest version of copay
     router.get('/latest-version', async (req, res) => {
+      SetPublicCache(res, 10 * ONE_MINUTE);
       try {
         res.setHeader('User-Agent', 'copay');
         var options = {
@@ -524,6 +532,7 @@ export class ExpressApp {
           res.json(ads);
         });
       } else {
+        SetPublicCache(res, 5 * ONE_MINUTE);
         server.getAdverts(req.body, (err, ads) => {
           if (err) returnError(err, res, req);
           res.json(ads);
@@ -740,6 +749,7 @@ export class ExpressApp {
 
     // DEPRECATED
     router.get('/v1/feelevels/', estimateFeeLimiter, (req, res) => {
+      SetPublicCache(res, 1 * ONE_MINUTE);
       logDeprecated(req);
       const opts: { network?: string } = {};
       if (req.query.network) opts.network = req.query.network;
@@ -761,6 +771,7 @@ export class ExpressApp {
 
     router.get('/v2/feelevels/', (req, res) => {
       const opts: { coin?: string; network?: string } = {};
+      SetPublicCache(res, 1 * ONE_MINUTE);
       if (req.query.coin) opts.coin = req.query.coin;
       if (req.query.network) opts.network = req.query.network;
 
@@ -1009,7 +1020,10 @@ export class ExpressApp {
       });
     });
 
+    // Retrive stats DO NOT UPDATE THEM
+    // To update them run /updatestats
     router.get('/v1/stats/', (req, res) => {
+      SetPublicCache(res, 1 * ONE_MINUTE);
       const opts: {
         network?: string;
         coin?: string;
@@ -1031,6 +1045,7 @@ export class ExpressApp {
     });
 
     router.get('/v1/version/', (req, res) => {
+      SetPublicCache(res, 1 * ONE_MINUTE);
       res.json({
         serviceVersion: WalletService.getServiceVersion()
       });
@@ -1115,6 +1130,7 @@ export class ExpressApp {
     });
 
     router.get('/v1/fiatrates/:code/', (req, res) => {
+      SetPublicCache(res, 5 * ONE_MINUTE);
       let server;
       const opts = {
         code: req.params['code'],
@@ -1133,6 +1149,7 @@ export class ExpressApp {
     });
 
     router.get('/v2/fiatrates/:code/', (req, res) => {
+      SetPublicCache(res, 5 * ONE_MINUTE);
       let server;
       const opts = {
         code: req.params['code'],
@@ -1144,6 +1161,25 @@ export class ExpressApp {
         return returnError(ex, res, req);
       }
       server.getHistoricalRates(opts, (err, rates) => {
+        if (err) return returnError(err, res, req);
+        res.json(rates);
+      });
+    });
+
+    router.get('/v3/fiatrates/:coin/', (req, res) => {
+      SetPublicCache(res, 5 * ONE_MINUTE);
+      let server;
+      const opts = {
+        coin: req.params['coin'],
+        code: req.query.code || null,
+        ts: req.query.ts ? +req.query.ts : null
+      };
+      try {
+        server = getServer(req, res);
+      } catch (ex) {
+        return returnError(ex, res, req);
+      }
+      server.getFiatRates(opts, (err, rates) => {
         if (err) return returnError(err, res, req);
         res.json(rates);
       });
@@ -1271,6 +1307,107 @@ export class ExpressApp {
             if (err) return returnError(err, res, req);
           });
       });
+    });
+
+    router.post('/v1/service/changelly/getCurrencies', (req, res) => {
+      let server;
+      try {
+        server = getServer(req, res);
+      } catch (ex) {
+        return returnError(ex, res, req);
+      }
+      server
+        .changellyGetCurrencies(req)
+        .then(response => {
+          res.json(response);
+        })
+        .catch(err => {
+          if (err) return returnError(err, res, req);
+        });
+    });
+
+    router.post('/v1/service/changelly/getPairsParams', (req, res) => {
+      getServerWithAuth(req, res, server => {
+        server
+          .changellyGetPairsParams(req)
+          .then(response => {
+            res.json(response);
+          })
+          .catch(err => {
+            if (err) return returnError(err, res, req);
+          });
+      });
+    });
+
+    router.post('/v1/service/changelly/getFixRateForAmount', (req, res) => {
+      getServerWithAuth(req, res, server => {
+        server
+          .changellyGetFixRateForAmount(req)
+          .then(response => {
+            res.json(response);
+          })
+          .catch(err => {
+            if (err) return returnError(err, res, req);
+          });
+      });
+    });
+
+    router.post('/v1/service/changelly/createFixTransaction', (req, res) => {
+      getServerWithAuth(req, res, server => {
+        server
+          .changellyCreateFixTransaction(req)
+          .then(response => {
+            res.json(response);
+          })
+          .catch(err => {
+            if (err) return returnError(err, res, req);
+          });
+      });
+    });
+
+    router.post('/v1/service/changelly/getStatus', (req, res) => {
+      let server;
+      try {
+        server = getServer(req, res);
+      } catch (ex) {
+        return returnError(ex, res, req);
+      }
+      server
+        .changellyGetStatus(req)
+        .then(response => {
+          res.json(response);
+        })
+        .catch(err => {
+          if (err) return returnError(err, res, req);
+        });
+    });
+
+    router.get('/v1/service/payId/:payId', (req, res) => {
+      let server;
+      const payId = req.params['payId'];
+      const opts = {
+        handle: payId.split('$')[0],
+        domain: payId.split('$')[1]
+      };
+      try {
+        server = getServer(req, res);
+      } catch (ex) {
+        return returnError(ex, res, req);
+      }
+      server
+        .discoverPayId(opts)
+        .then(response => {
+          res.json(response);
+        })
+        .catch(err => {
+          if (err) return returnError(err, res, req);
+        });
+    });
+
+    // Set no-cache by default
+    this.app.use((req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store');
+      next();
     });
 
     this.app.use(opts.basePath || '/bws/api', router);

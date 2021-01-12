@@ -77,11 +77,12 @@ module.exports = {
   },
   fiatRateServiceOpts: {
     defaultProvider: 'BitPay',
-    fetchInterval: 60 // in minutes
+    fetchInterval: 5 // in minutes
   },
   maintenanceOpts: {
     maintenanceMode: false
   },
+  suspendedChains: [],
   staticRoot: '/tmp/static'
   // simplex: {
   //   sandbox: {
@@ -110,6 +111,11 @@ module.exports = {
   //     widgetUrl: 'https://pay.sendwyre.com/',
   //     appProviderAccountId: 'wyre_provider_production_account_id_here'
   //   }
+  // },
+  // changelly: {
+  //   apiKey: 'changelly_api_key',
+  //   secret: 'changelly_secret',
+  //   api: 'https://api.changelly.com'
   // },
   // To use email notifications uncomment this:
   // emailOpts: {

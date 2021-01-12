@@ -82,7 +82,7 @@ export class Wallet {
   }
 
   static async create(params: Partial<WalletObj>) {
-    const { chain, network, name, phrase, password, path, lite } = params;
+    const { chain, network, name, phrase, password, path, lite, baseUrl } = params;
     let { storageType, storage } = params;
     if (!chain || !network || !name) {
       throw new Error('Missing required parameter');
@@ -122,7 +122,12 @@ export class Wallet {
     if (alreadyExists) {
       throw new Error('Wallet already exists');
     }
-    const wallet = Object.assign(params, {
+    const wallet = Object.assign({
+      name,
+      chain,
+      network,
+      path,
+      baseUrl,
       encryptionKey,
       authKey,
       authPubKey,
@@ -131,7 +136,8 @@ export class Wallet {
       xPubKey: hdPrivKey.xpubkey,
       pubKey,
       tokens: [],
-      storageType
+      storageType,
+      lite
     });
 
     if (lite) {
@@ -459,12 +465,12 @@ export class Wallet {
     return address;
   }
 
-  async derivePrivateKey(isChange) {
+  async derivePrivateKey(isChange, addressIndex = 0) {
     const keyToImport = await Deriver.derivePrivateKey(
       this.chain,
       this.network,
       this.unlocked.masterKey,
-      this.addressIndex || 0,
+      addressIndex || this.addressIndex || 0,
       isChange
     );
     return keyToImport;

@@ -151,7 +151,7 @@ export class WalletService {
    * @param {Callback} cb
    */
   static initialize(opts, cb) {
-    $.shouldBeFunction(cb);
+    $.shouldBeFunction(cb, '');
 
     opts = opts || {};
     blockchainExplorer = opts.blockchainExplorer;
@@ -220,7 +220,7 @@ export class WalletService {
         }
       ],
       err => {
-        lock = opts.lock || new Lock(storage, opts.lockOpts);
+        lock = opts.lock || new Lock(storage);
 
         if (err) {
           logger.error('Could not initialize', err);
@@ -376,7 +376,7 @@ export class WalletService {
   }
 
   _runLocked(cb, task, waitTime?: number) {
-    $.checkState(this.walletId);
+    $.checkState(this.walletId, 'Failed state: this.walletId undefined at <_runLocked()>');
 
     this.lock.runLocked(this.walletId, { waitTime }, cb, task);
   }
@@ -746,10 +746,6 @@ export class WalletService {
         next => {
           this.getPreferences({}, (err, preferences) => {
             if (err) return next(err);
-            if (!opts.includeExtendedInfo) {
-              preferences.tokenAddresses = null;
-              preferences.multisigEthInfo = null;
-            }
             status.preferences = preferences;
             next();
           });
@@ -817,7 +813,7 @@ export class WalletService {
     const walletId = this.walletId || data.walletId;
     const copayerId = this.copayerId || data.copayerId;
 
-    $.checkState(walletId);
+    $.checkState(walletId, 'Failed state: walletId undefined at <_notify()>');
 
     const notification = Notification.create({
       type,
@@ -1112,6 +1108,9 @@ export class WalletService {
    * @param {string} opts.email - Email address for notifications.
    * @param {string} opts.language - Language used for notifications.
    * @param {string} opts.unit - Bitcoin unit used to format amounts in notifications.
+   * @param {string} opts.tokenAddresses - Linked token addresses
+   * @param {string} opts.multisigEthInfo - Linked multisig eth wallet info
+   *
    */
   savePreferences(opts, cb) {
     opts = opts || {};
@@ -1194,9 +1193,21 @@ export class WalletService {
           if (opts.multisigEthInfo) {
             oldPref = oldPref || {};
             oldPref.multisigEthInfo = oldPref.multisigEthInfo || [];
-            preferences.multisigEthInfo = _.uniqBy(
-              oldPref.multisigEthInfo.concat(opts.multisigEthInfo),
-              'multisigContractAddress'
+
+            preferences.multisigEthInfo = _.uniq(
+              oldPref.multisigEthInfo.concat(opts.multisigEthInfo).reduce((x, y) => {
+                let exists = false;
+                x.forEach(e => {
+                  // add new token addresses linked to the multisig wallet
+                  if (e.multisigContractAddress === y.multisigContractAddress) {
+                    e.tokenAddresses = e.tokenAddresses || [];
+                    y.tokenAddresses = _.uniq(e.tokenAddresses.concat(y.tokenAddresses));
+                    e = Object.assign(e, y);
+                    exists = true;
+                  }
+                });
+                return exists ? x : [...x, y];
+              }, [])
             );
           }
 
@@ -2177,6 +2188,12 @@ export class WalletService {
 
           if (wallet.scanStatus == 'error') return cb(Errors.WALLET_NEED_SCAN);
 
+          if (config.suspendedChains && config.suspendedChains.includes(wallet.coin)) {
+            let Err = Errors.NETWORK_SUSPENDED;
+            Err.message = Err.message.replace('$network', wallet.coin.toUpperCase());
+            return cb(Err);
+          }
+
           checkTxpAlreadyExists(opts.txProposalId, (err, txp) => {
             if (err) return cb(err);
             if (txp) return cb(null, txp);
@@ -2301,10 +2318,9 @@ export class WalletService {
                 next => {
                   if (opts.dryRun) return next();
 
-                  if (txp.coin == 'bch') {
-                    if (opts.noCashAddr && txp.changeAddress) {
-                      txp.changeAddress.address = BCHAddressTranslator.translate(txp.changeAddress.address, 'copay');
-                    }
+                  if (txp.coin == 'bch' && txp.changeAddress) {
+                    const format = opts.noCashAddr ? 'copay' : 'cashaddr';
+                    txp.changeAddress.address = BCHAddressTranslator.translate(txp.changeAddress.address, format);
                   }
 
                   this.storage.storeTx(wallet.id, txp, next);
@@ -2343,6 +2359,12 @@ export class WalletService {
       this.getWallet({}, (err, wallet) => {
         if (err) return cb(err);
 
+        if (config.suspendedChains && config.suspendedChains.includes(wallet.coin)) {
+          let Err = Errors.NETWORK_SUSPENDED;
+          Err.message = Err.message.replace('$network', wallet.coin.toUpperCase());
+          return cb(Err);
+        }
+
         this.storage.fetchTx(this.walletId, opts.txProposalId, (err, txp) => {
           if (err) return cb(err);
           if (!txp) return cb(Errors.TX_NOT_FOUND);
@@ -2375,10 +2397,9 @@ export class WalletService {
               if (err) return cb(err);
 
               this._notifyTxProposalAction('NewTxProposal', txp, () => {
-                if (opts.noCashAddr && txp.coin == 'bch') {
-                  if (txp.changeAddress) {
-                    txp.changeAddress.address = BCHAddressTranslator.translate(txp.changeAddress.address, 'copay');
-                  }
+                if (txp.coin == 'bch' && txp.changeAddress) {
+                  const format = opts.noCashAddr ? 'copay' : 'cashaddr';
+                  txp.changeAddress.address = BCHAddressTranslator.translate(txp.changeAddress.address, format);
                 }
                 return cb(null, txp);
               });
@@ -2576,6 +2597,12 @@ export class WalletService {
     this.getWallet({}, (err, wallet) => {
       if (err) return cb(err);
 
+      if (config.suspendedChains && config.suspendedChains.includes(wallet.coin)) {
+        let Err = Errors.NETWORK_SUSPENDED;
+        Err.message = Err.message.replace('$network', wallet.coin.toUpperCase());
+        return cb(Err);
+      }
+
       this.getTx(
         {
           txProposalId: opts.txProposalId
@@ -2651,7 +2678,7 @@ export class WalletService {
   }
 
   _processBroadcast(txp, opts, cb) {
-    $.checkState(txp.txid);
+    $.checkState(txp.txid, 'Failed state: txp.txid undefined at <_processBroadcast()>');
     opts = opts || {};
 
     txp.setBroadcasted();
@@ -2681,6 +2708,12 @@ export class WalletService {
 
     this.getWallet({}, (err, wallet) => {
       if (err) return cb(err);
+
+      if (config.suspendedChains && config.suspendedChains.includes(wallet.coin)) {
+        let Err = Errors.NETWORK_SUSPENDED;
+        Err.message = Err.message.replace('$network', wallet.coin.toUpperCase());
+        return cb(Err);
+      }
 
       this.getTx(
         {
@@ -2858,19 +2891,19 @@ export class WalletService {
               return txp.status == 'broadcasted';
             });
 
-            if (opts.noCashAddr && txps[0] && txps[0].coin == 'bch') {
+            if (txps[0] && txps[0].coin == 'bch') {
+              const format = opts.noCashAddr ? 'copay' : 'cashaddr';
               _.each(txps, x => {
                 if (x.changeAddress) {
-                  x.changeAddress.address = BCHAddressTranslator.translate(x.changeAddress.address, 'copay');
+                  x.changeAddress.address = BCHAddressTranslator.translate(x.changeAddress.address, format);
                 }
                 _.each(x.outputs, x => {
                   if (x.toAddress) {
-                    x.toAddress = BCHAddressTranslator.translate(x.toAddress, 'copay');
+                    x.toAddress = BCHAddressTranslator.translate(x.toAddress, format);
                   }
                 });
               });
             }
-
             return cb(err, txps);
           }
         );
@@ -4117,6 +4150,25 @@ export class WalletService {
   }
 
   /**
+   * Returns exchange rates of the supported fiat currencies for the specified coin.
+   * @param {Object} opts
+   * @param {String} opts.coin - The coin requested (btc, bch, eth, xrp).
+   * @param {String} [opts.code] - Currency ISO code (e.g: USD, EUR, ARS).
+   * @param {Date} [opts.ts] - A timestamp to base the rate on (default Date.now()).
+   * @param {String} [opts.provider] - A provider of exchange rates (default 'BitPay').
+   * @returns {Array} rates - The exchange rate.
+   */
+  getFiatRates(opts, cb) {
+    if (!checkRequired(opts, ['coin'], cb)) return;
+    if (_.isNaN(opts.ts) || _.isArray(opts.ts)) return cb(new ClientError('Invalid timestamp'));
+
+    this.fiatRateService.getRates(opts, (err, rate) => {
+      if (err) return cb(err);
+      return cb(null, rate);
+    });
+  }
+
+  /**
    * Returns historical exchange rates for the specified currency & timestamp range.
    * @param {Object} opts
    * @param {string} opts.code - Currency ISO code.
@@ -4139,6 +4191,7 @@ export class WalletService {
    * @param {string} opts.token - The token representing the app/device.
    * @param {string} [opts.packageName] - The restricted_package_name option associated with this token.
    * @param {string} [opts.platform] - The platform associated with this token.
+   * @param {string} [opts.walletId] - The walletId associated with this token.
    */
   pushNotificationsSubscribe(opts, cb) {
     if (!checkRequired(opts, ['token'], cb)) return;
@@ -4146,7 +4199,8 @@ export class WalletService {
       copayerId: this.copayerId,
       token: opts.token,
       packageName: opts.packageName,
-      platform: opts.platform
+      platform: opts.platform,
+      walletId: opts.walletId
     });
 
     this.storage.storePushNotificationSub(sub, cb);
@@ -4191,24 +4245,39 @@ export class WalletService {
     this.storage.removeTxConfirmationSub(this.copayerId, opts.txid, cb);
   }
 
+  simplexGetKeys(req) {
+    if (!config.simplex) throw new Error('Simplex missing credentials');
+
+    let env = 'sandbox';
+    if (req.body.env && req.body.env == 'production') {
+      env = 'production';
+    }
+    delete req.body.env;
+
+    const keys = {
+      API: config.simplex[env].api,
+      API_KEY: config.simplex[env].apiKey,
+      APP_PROVIDER_ID: config.simplex[env].appProviderId
+    };
+
+    return keys;
+  }
+
   simplexGetQuote(req): Promise<any> {
     return new Promise((resolve, reject) => {
-      if (!config.simplex) return reject(new Error('Simplex missing credentials'));
-      if (!req.body.env || (req.body.env != 'sandbox' && req.body.env != 'production'))
-        return reject(new Error("Simplex's request wrong environment"));
+      const keys = this.simplexGetKeys(req);
 
-      const API = config.simplex[req.body.env].api;
-      const API_KEY = config.simplex[req.body.env].apiKey;
+      const API = keys.API;
+      const API_KEY = keys.API_KEY;
       const ip = Utils.getIpFromReq(req);
 
       req.body.client_ip = ip;
-      req.body.wallet_id = config.simplex[req.body.env].appProviderId;
+      req.body.wallet_id = keys.APP_PROVIDER_ID;
 
       const headers = {
         'Content-Type': 'application/json',
         Authorization: 'ApiKey ' + API_KEY
       };
-      delete req.body.env;
 
       this.request.post(
         API + '/wallet/merchant/v2/quote',
@@ -4219,7 +4288,7 @@ export class WalletService {
         },
         (err, data) => {
           if (err) {
-            return reject(err.body ? err.body : null);
+            return reject(err.body ? err.body : err);
           } else {
             return resolve(data.body ? data.body : null);
           }
@@ -4230,20 +4299,21 @@ export class WalletService {
 
   simplexPaymentRequest(req): Promise<any> {
     return new Promise((resolve, reject) => {
-      if (!config.simplex) return reject(new Error('Simplex missing credentials'));
-      if (!req.body.env || (req.body.env != 'sandbox' && req.body.env != 'production'))
-        return reject(new Error("Simplex's request wrong environment"));
+      const keys = this.simplexGetKeys(req);
 
-      const API = config.simplex[req.body.env].api;
-      const API_KEY = config.simplex[req.body.env].apiKey;
-      const appProviderId = config.simplex[req.body.env].appProviderId;
+      const API = keys.API;
+      const API_KEY = keys.API_KEY;
+      const appProviderId = keys.APP_PROVIDER_ID;
       const paymentId = Uuid.v4();
       const orderId = Uuid.v4();
-      const apiHost = config.simplex[req.body.env].api;
+      const apiHost = keys.API;
       const ip = Utils.getIpFromReq(req);
 
-      if (!req.body.account_details || !req.body.transaction_details || !req.body.transaction_details.payment_details) {
-        return reject(new Error("Simplex's request missing arguments"));
+      if (
+        !checkRequired(req.body, ['account_details', 'transaction_details']) &&
+        !checkRequired(req.body.transaction_details, ['payment_details'])
+      ) {
+        return reject(new ClientError("Simplex's request missing arguments"));
       }
 
       req.body.account_details.app_provider_id = appProviderId;
@@ -4260,7 +4330,6 @@ export class WalletService {
 
       req.body.transaction_details.payment_details.payment_id = paymentId;
       req.body.transaction_details.payment_details.order_id = orderId;
-      delete req.body.env;
 
       const headers = {
         'Content-Type': 'application/json',
@@ -4276,7 +4345,7 @@ export class WalletService {
         },
         (err, data) => {
           if (err) {
-            return reject(err.body ? err.body : null);
+            return reject(err.body ? err.body : err);
           } else {
             data.body.payment_id = paymentId;
             data.body.order_id = orderId;
@@ -4343,17 +4412,9 @@ export class WalletService {
       const keys = this.wyreGetKeys(req);
       req.body.accountId = keys.ACCOUNT_ID;
 
-      if (
-        !req.body.amount ||
-        !req.body.sourceCurrency ||
-        !req.body.destCurrency ||
-        !req.body.dest ||
-        !req.body.country
-      ) {
-        return reject(new Error("Wyre's request missing arguments"));
+      if (!checkRequired(req.body, ['amount', 'sourceCurrency', 'destCurrency', 'dest', 'country'])) {
+        return reject(new ClientError("Wyre's request missing arguments"));
       }
-
-      delete req.body.env;
 
       const URL: string = `${keys.API}/v3/orders/quote/partner?timestamp=${Date.now().toString()}`;
       const XApiSignature: string = URL + JSON.stringify(req.body);
@@ -4377,7 +4438,7 @@ export class WalletService {
         },
         (err, data) => {
           if (err) {
-            return reject(err.body ? err.body : null);
+            return reject(err.body ? err.body : err);
           } else {
             return resolve(data.body);
           }
@@ -4391,17 +4452,9 @@ export class WalletService {
       const keys = this.wyreGetKeys(req);
       req.body.referrerAccountId = keys.ACCOUNT_ID;
 
-      if (
-        !req.body.amount ||
-        !req.body.sourceCurrency ||
-        !req.body.destCurrency ||
-        !req.body.dest ||
-        !req.body.paymentMethod
-      ) {
-        return reject(new Error("Wyre's request missing arguments"));
+      if (!checkRequired(req.body, ['amount', 'sourceCurrency', 'destCurrency', 'dest', 'paymentMethod'])) {
+        return reject(new ClientError("Wyre's request missing arguments"));
       }
-
-      delete req.body.env;
 
       const URL: string = `${keys.API}/v3/orders/reserve?timestamp=${Date.now().toString()}`;
       const XApiSignature: string = URL + JSON.stringify(req.body);
@@ -4425,9 +4478,335 @@ export class WalletService {
         },
         (err, data) => {
           if (err) {
-            return reject(err.body ? err.body : null);
+            return reject(err.body ? err.body : err);
           } else {
             return resolve(data.body);
+          }
+        }
+      );
+    });
+  }
+
+  changellyGetKeys(req) {
+    if (!config.changelly) {
+      logger.warn('Changelly missing credentials');
+      throw new Error('ClientError: Service not configured.');
+    }
+
+    const keys = {
+      API: config.changelly.api,
+      API_KEY: config.changelly.apiKey,
+      SECRET: config.changelly.secret
+    };
+
+    return keys;
+  }
+
+  changellySignRequests(message, secret: string) {
+    if (!message || !secret) throw new Error('Missing parameters to sign Changelly request');
+
+    const sign: string = Bitcore.crypto.Hash.sha512hmac(
+      Buffer.from(JSON.stringify(message)),
+      Buffer.from(secret)
+    ).toString('hex');
+
+    return sign;
+  }
+
+  changellyGetCurrencies(req): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const keys = this.changellyGetKeys(req);
+
+      if (!checkRequired(req.body, ['id'])) {
+        return reject(new ClientError('changellyGetCurrencies request missing arguments'));
+      }
+
+      const message = {
+        jsonrpc: '2.0',
+        id: req.body.id,
+        method: req.body.full ? 'getCurrenciesFull' : 'getCurrencies',
+        params: {}
+      };
+
+      const URL: string = keys.API;
+      const sign: string = this.changellySignRequests(message, keys.SECRET);
+
+      const headers = {
+        'Content-Type': 'application/json',
+        sign,
+        'api-key': keys.API_KEY
+      };
+
+      this.request.post(
+        URL,
+        {
+          headers,
+          body: message,
+          json: true
+        },
+        (err, data) => {
+          if (err) {
+            return reject(err.body ?? err);
+          } else {
+            return resolve(data.body);
+          }
+        }
+      );
+    });
+  }
+
+  changellyGetPairsParams(req): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const keys = this.changellyGetKeys(req);
+
+      if (!checkRequired(req.body, ['id', 'coinFrom', 'coinTo'])) {
+        return reject(new ClientError('changellyGetPairsParams request missing arguments'));
+      }
+
+      const message = {
+        id: req.body.id,
+        jsonrpc: '2.0',
+        method: 'getPairsParams',
+        params: [
+          {
+            from: req.body.coinFrom,
+            to: req.body.coinTo
+          }
+        ]
+      };
+
+      const URL: string = keys.API;
+      const sign: string = this.changellySignRequests(message, keys.SECRET);
+
+      const headers = {
+        'Content-Type': 'application/json',
+        sign,
+        'api-key': keys.API_KEY
+      };
+
+      this.request.post(
+        URL,
+        {
+          headers,
+          body: message,
+          json: true
+        },
+        (err, data) => {
+          if (err) {
+            return reject(err.body ?? err);
+          } else {
+            return resolve(data.body);
+          }
+        }
+      );
+    });
+  }
+
+  changellyGetFixRateForAmount(req): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const keys = this.changellyGetKeys(req);
+
+      if (!checkRequired(req.body, ['id', 'coinFrom', 'coinTo', 'amountFrom'])) {
+        return reject(new ClientError('changellyGetFixRateForAmount request missing arguments'));
+      }
+
+      const message = {
+        id: req.body.id,
+        jsonrpc: '2.0',
+        method: 'getFixRateForAmount',
+        params: [
+          {
+            from: req.body.coinFrom,
+            to: req.body.coinTo,
+            amountFrom: req.body.amountFrom
+          }
+        ]
+      };
+
+      const URL: string = keys.API;
+      const sign: string = this.changellySignRequests(message, keys.SECRET);
+
+      const headers = {
+        'Content-Type': 'application/json',
+        sign,
+        'api-key': keys.API_KEY
+      };
+
+      this.request.post(
+        URL,
+        {
+          headers,
+          body: message,
+          json: true
+        },
+        (err, data) => {
+          if (err) {
+            return reject(err.body ?? err);
+          } else {
+            return resolve(data.body);
+          }
+        }
+      );
+    });
+  }
+
+  changellyCreateFixTransaction(req): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const keys = this.changellyGetKeys(req);
+
+      if (
+        !checkRequired(req.body, [
+          'id',
+          'coinFrom',
+          'coinTo',
+          'amountFrom',
+          'addressTo',
+          'fixedRateId',
+          'refundAddress'
+        ])
+      ) {
+        return reject(new ClientError('changellyCreateFixTransaction request missing arguments'));
+      }
+
+      const message = {
+        id: req.body.id,
+        jsonrpc: '2.0',
+        method: 'createFixTransaction',
+        params: {
+          from: req.body.coinFrom,
+          to: req.body.coinTo,
+          address: req.body.addressTo,
+          amountFrom: req.body.amountFrom,
+          rateId: req.body.fixedRateId,
+          refundAddress: req.body.refundAddress
+        }
+      };
+
+      const URL: string = keys.API;
+      const sign: string = this.changellySignRequests(message, keys.SECRET);
+
+      const headers = {
+        'Content-Type': 'application/json',
+        sign,
+        'api-key': keys.API_KEY
+      };
+
+      this.request.post(
+        URL,
+        {
+          headers,
+          body: message,
+          json: true
+        },
+        (err, data) => {
+          if (err) {
+            return reject(err.body ?? err);
+          } else {
+            return resolve(data.body);
+          }
+        }
+      );
+    });
+  }
+
+  changellyGetStatus(req): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const keys = this.changellyGetKeys(req);
+
+      if (!checkRequired(req.body, ['id', 'exchangeTxId'])) {
+        return reject(new ClientError('changellyGetStatus request missing arguments'));
+      }
+
+      const message = {
+        jsonrpc: '2.0',
+        id: req.body.id,
+        method: 'getStatus',
+        params: {
+          id: req.body.exchangeTxId
+        }
+      };
+
+      const URL: string = keys.API;
+      const sign: string = this.changellySignRequests(message, keys.SECRET);
+
+      const headers = {
+        'Content-Type': 'application/json',
+        sign,
+        'api-key': keys.API_KEY
+      };
+
+      this.request.post(
+        URL,
+        {
+          headers,
+          body: message,
+          json: true
+        },
+        (err, data) => {
+          if (err) {
+            return reject(err.body ?? err);
+          } else {
+            return resolve(data.body);
+          }
+        }
+      );
+    });
+  }
+
+  getPayId(url: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const headers = {
+        'PayID-Version': '1.0',
+        Accept: 'application/payid+json'
+      };
+      this.request.get(
+        url,
+        {
+          headers,
+          json: true
+        },
+        (err, data) => {
+          if (err) {
+            return reject(err.body ? err.body : err);
+          } else {
+            return resolve(data.body ? data.body : data);
+          }
+        }
+      );
+    });
+  }
+
+  discoverPayId(req): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const URL: string = `https://${req.domain}/.well-known/webfinger?resource=payid%3A${req.handle}%24${req.domain}`;
+      const headers = {
+        'PayID-Version': '1.0',
+        Accept: 'application/payid+json'
+      };
+      this.request.get(
+        URL,
+        {
+          headers,
+          json: true
+        },
+        (err, data) => {
+          if (err) {
+            return reject(err.body ? err.body : err);
+          } else {
+            let url;
+            if (data.body && data.body.links && data.body.links[0].template) {
+              const template: string = data.body.links[0].template;
+              url = template.replace('{acctpart}', req.handle);
+            } else {
+              url = `https://${req.domain}/${req.handle}`;
+            }
+            this.getPayId(url)
+              .then(data => {
+                return resolve(data);
+              })
+              .catch(err => {
+                return reject(err);
+              });
           }
         }
       );

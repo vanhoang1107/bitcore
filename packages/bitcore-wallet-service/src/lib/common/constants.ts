@@ -10,14 +10,18 @@ module.exports = {
     USDC: 'usdc',
     PAX: 'pax',
     GUSD: 'gusd',
-    BUSD: 'busd'
+    BUSD: 'busd',
+    DAI: 'dai',
+    WBTC: 'wbtc'
   },
 
   ERC20: {
     USDC: 'usdc',
     PAX: 'pax',
     GUSD: 'gusd',
-    BUSD: 'busd'
+    BUSD: 'busd',
+    DAI: 'dai',
+    WBTC: 'wbtc'
   },
 
   UTXO_COINS: {
@@ -52,7 +56,5 @@ module.exports = {
 
   BIP45_SHARED_INDEX: 0x80000000 - 1,
 
-  TOKEN_OPTS: CWC.Constants.TOKEN_OPTS,
-
-  ETH_MULTISIG_TX_PROPOSAL_EXPIRE_TIME: 48 * 3600
+  TOKEN_OPTS: CWC.Constants.TOKEN_OPTS
 };
